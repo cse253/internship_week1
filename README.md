@@ -128,6 +128,4 @@ This project aims to bridge communication gaps for the Deaf and hard-of-hearing 
 
 ---
 
-## Author
 
-Rishi Raj — Internship Week 1, May 2026
