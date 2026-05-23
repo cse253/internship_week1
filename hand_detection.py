@@ -1,50 +1,71 @@
+# Hand Detection with ASL Alphabet Prediction
+# Detects hand landmarks and predicts ASL letter using trained Random Forest model
+
 import cv2
 import mediapipe as mp
-import numpy as np
+import pickle
+import os
 
-mp_hands = mp.tasks.vision.HandLandmarker
-BaseOptions = mp.tasks.BaseOptions
-HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
-HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
-VisionRunningMode = mp.tasks.vision.RunningMode
+# ── 1. Load trained ASL Alphabet model ───────────────────────────────────────
+MODEL_PATH = "asl_model.pkl"
+if not os.path.exists(MODEL_PATH):
+    print(f"Model '{MODEL_PATH}' not found. Please run train_model.py first.")
+    exit(1)
 
-MODEL_PATH = "hand_landmarker.task"
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
+print("ASL model loaded successfully. Starting webcam...")
 
-latest_result = None
+# ── 2. MediaPipe Solutions Hands setup ───────────────────────────────────────
+mp_hands = mp.solutions.hands
+mp_draw = mp.solutions.drawing_utils
 
-def result_callback(result: HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
-    global latest_result
-    latest_result = result
-
-options = HandLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=MODEL_PATH),
-    running_mode=VisionRunningMode.LIVE_STREAM,
-    num_hands=2,
-    result_callback=result_callback
-)
-
+# Support up to 2 hands in hand_detection.py
 cap = cv2.VideoCapture(0)
 
-with mp_hands.create_from_options(options) as landmarker:
-    timestamp = 0
+with mp_hands.Hands(
+    max_num_hands=2,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+) as hands:
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
+
+        # Convert image color to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        landmarker.detect_async(mp_image, timestamp)
-        timestamp += 1
+        result = hands.process(rgb_frame)
 
-        if latest_result:
-            for hand_landmarks in latest_result.hand_landmarks:
-                h, w, _ = frame.shape
-                for lm in hand_landmarks:
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
+        if result.multi_hand_landmarks:
+            for hand_idx, hand_landmarks in enumerate(result.multi_hand_landmarks):
+                # Draw landmarks on frame
+                mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-        cv2.imshow("Hand Detection", frame)
+                # Build 63 features
+                row = []
+                for lm in hand_landmarks.landmark:
+                    row.extend([lm.x, lm.y, lm.z])
+
+                # Predict ASL letter
+                prediction = model.predict([row])[0]
+                confidence = round(max(model.predict_proba([row])[0]) * 100, 1)
+
+                # Draw prediction info near the hand (Wrist landmark is index 0)
+                wrist = hand_landmarks.landmark[0]
+                cx, cy = int(wrist.x * w), int(wrist.y * h)
+                
+                # Show label text above wrist
+                cv2.putText(frame, f"{prediction.upper()} ({confidence}%)", 
+                            (cx - 30, cy - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(frame, "No hand detected", (10, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        cv2.imshow("Hand Detection - ASL Alphabet", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 

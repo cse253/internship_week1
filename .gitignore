@@ -1,3 +1,7 @@
 venv/
 __pycache__/
 *.pyc
+*.pkl
+hand_landmarker.task
+EmoSign/landmarks/
+asl_dataset/
